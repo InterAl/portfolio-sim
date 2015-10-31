@@ -1,0 +1,4 @@
+*.njsproj*
+.ntvs_analysis.dat
+node_modules/
+reports

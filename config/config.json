@@ -1,0 +1,10 @@
+{
+    "startingCapital": 100000,
+    "rebalancingPercentageThreshold": 0.10,
+    "allocations": {
+        "stocks": 0.25,
+		"bonds": 0.25,
+		"gold": 0.25,
+		"cash": 0.25
+    }
+}
