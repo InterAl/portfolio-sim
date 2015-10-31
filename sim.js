@@ -1,9 +1,11 @@
 var fs = require("fs"),
     csvToJson = require("csv-to-json"),
-    Q = require("q");
+    Q = require("q"),
+    colors = require("colors");
 
 var startingCapital = 0,
     rebalancingPercentageThreshold = 0.10,
+    taxRatio = 0.25,
     assets = {};
 
 function getCurrentAssetWorth(assetName) {
@@ -42,45 +44,64 @@ function updatePrices(n) {
 
 function printWorth() {
     var msg = Object.keys(assets).reduce(function(p, assetName) {
-        return p + "\n" + assetName + ": " + getCurrentAssetWorth(assetName) + " (" + Math.round(100 * getCurrentAssetAllocationPercentage(assetName)) + "%)";
+        return p + "\n" + assetName + ": " + Math.round(getCurrentAssetWorth(assetName)) + " (" + Math.round(100 * getCurrentAssetAllocationPercentage(assetName)) + "%)";
     }, "current worth:\n");
 
     console.log(msg);
-    console.log("total: ", getTotalWorth(), " total yield: ", 100 * getTotalYield(), "%");
+    console.log("total: ", Math.round(getTotalWorth()), " total yield: ", Math.round(100 * getTotalYield()), "%");
+}
+
+function sellAndRebalance(assetName) {
+    var asset = assets[assetName],
+        currAssetWorth = getCurrentAssetWorth(assetName),
+        totalWorth = getTotalWorth();
+    
+    console.log("--------------------------------".green);
+    console.log("before rebalancing: ".green, assetName.green);
+    printWorth();
+    var totalSellWorth = currAssetWorth - asset.allocationPercentage * totalWorth;
+    var assetSellQty = totalSellWorth / asset.currentPrice;
+    asset.currentQty -= assetSellQty;
+        
+    var tempBalance = (1 - taxRatio) * totalSellWorth;
+    Object.keys(assets).forEach(function (otherAssetName) {
+        if (otherAssetName != assetName) {
+            var otherAsset = assets[otherAssetName];
+            var diffAmt = otherAsset.allocationPercentage * totalWorth - otherAsset.currentPrice * otherAsset.currentQty;
+            diffAmt = Math.min(diffAmt, tempBalance);
+            if (diffAmt > 0) {
+                var diffQty = diffAmt / otherAsset.currentPrice;
+                tempBalance -= diffAmt;
+                otherAsset.currentQty += diffQty;
+            }
+        }
+    });
+        
+    console.log("\nafter rebalancing: ".green, assetName.green);
+    printWorth();
+    console.log("--------------------------------\n".green);
 }
 
 function rebalance() {
     Object.keys(assets).forEach(function (assetName) {
         var asset = assets[assetName],
-            currAssetPercentage = getCurrentAssetAllocationPercentage(assetName),
-            currAssetWorth = getCurrentAssetWorth(assetName),
-            totalWorth = getTotalWorth();
+            currAssetPercentage = getCurrentAssetAllocationPercentage(assetName);
         
-        if (currAssetPercentage > asset.allocationPercentage + rebalancingPercentageThreshold) {
-            console.log("--------------------------------");
-            console.log("before rebalancing: ", assetName);
-            printWorth();
-            var totalSellWorth = currAssetWorth - asset.allocationPercentage * totalWorth;
-            var assetSellQty = totalSellWorth / asset.currentPrice;
-            asset.currentQty -= assetSellQty;
-            
-            var tempBalance = totalSellWorth;
-            Object.keys(assets).forEach(function (otherAssetName) {
-                if (otherAssetName != assetName) {
-                    var otherAsset = assets[otherAssetName];
-                    var diffAmt = otherAsset.allocationPercentage * totalWorth - otherAsset.currentPrice * otherAsset.currentQty;
-                    diffAmt = Math.min(diffAmt, tempBalance);
-                    if (diffAmt > 0) {
-                        var diffQty = diffAmt / otherAsset.currentPrice;
-                        tempBalance -= diffAmt;
-                        otherAsset.currentQty += diffQty;
-                    }
-                }
+        if (Math.abs(currAssetPercentage - asset.allocationPercentage) >  rebalancingPercentageThreshold) {
+            //pick the biggest asset
+            console.log('trying to rebalance due to '.yellow, assetName.yellow, " being ".yellow, Math.round(100 * currAssetPercentage).toString().yellow, "%".yellow);
+            var assetsSorted = Object.keys(assets).sort(function(a, b) {
+                return getCurrentAssetAllocationPercentage(b) - getCurrentAssetAllocationPercentage(a);
             });
-            
-            console.log("\nafter rebalancing: ", assetName);
-            printWorth();
-            console.log("--------------------------------\n");
+
+            var assetsAboveThreshold = assetsSorted.filter(function(assetName) {
+                return getCurrentAssetAllocationPercentage(assetName) > assets[assetName].allocationPercentage;
+            });
+
+            if (assetsAboveThreshold.length > 0) {
+                var assetToRebalance = assetsAboveThreshold[0];
+                sellAndRebalance(assetToRebalance);
+            }
         }
     });
 }
@@ -122,6 +143,7 @@ function loadCfg() {
             var cfg = JSON.parse(config);
             startingCapital = cfg.startingCapital;
             rebalancingPercentageThreshold = cfg.rebalancingPercentageThreshold;
+            taxRatio = cfg.taxRatio;
             Object.keys(cfg.allocations).forEach(function(name) {
                 assets[name] = {};
                 assets[name].currentQty = 0;
