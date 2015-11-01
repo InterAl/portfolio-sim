@@ -8,15 +8,21 @@ var startingCapital = 0,
     taxRatio = 0.25,
     assets = {};
 
+function getAssetQuantity(asset) {
+    return asset.units.reduce(function(p, c) {
+        return p + c.count;
+    }, 0);
+}
+
 function getCurrentAssetWorth(assetName) {
     var asset = assets[assetName];
-    return asset.currentPrice * asset.currentQty;
+    return asset.currentPrice * getAssetQuantity(asset);
 }
 
 function getTotalWorth() {
     return Object.keys(assets).reduce(function (p, c) {
         var asset = assets[c];
-        return p + asset.currentPrice * asset.currentQty;
+        return p + asset.currentPrice * getAssetQuantity(asset);
     }, 0);
 }
 
@@ -31,7 +37,7 @@ function getTotalYield() {
 function initAllocation() {
     Object.keys(assets).forEach(function (name) {
         var asset = assets[name];
-        asset.currentQty = asset.allocationPercentage * startingCapital / asset.currentPrice;
+        buyAssetUnits(asset, asset.allocationPercentage * startingCapital / asset.currentPrice);
     });
 }
 
@@ -40,6 +46,41 @@ function updatePrices(n) {
         var asset = assets[name];
         asset.currentPrice = asset.priceData ? asset.priceData[n].Close : 1;
     });
+}
+
+function buyAssetUnits(asset, unitCount) {
+    asset.units.push({
+        count: unitCount,
+        price: asset.currentPrice
+    });
+
+    return asset.currentPrice * unitCount;
+}
+
+function sellAssetUnits(asset, unitCount) {
+    asset.units.sort(function(a, b) {
+        return b.price - a.price;
+    });
+
+    var remainingUts = unitCount;
+    var grossSellAmount = 0;
+    var netSellAmount = 0;
+
+    for (var i = 0; i < asset.units.length; i++) {
+        var units = asset.units[i];
+        var count = Math.min(units.count, remainingUts);
+        units.count -= count;
+        remainingUts -= count;
+        var gross = count * asset.currentPrice;
+        var tax = taxRatio * (count * asset.currentPrice - count * units.price);
+        grossSellAmount += gross;
+        netSellAmount += gross - tax;
+    }
+
+    var msg = 'gross sell: ' + grossSellAmount + " | net sell: " + netSellAmount + " | tax %: " + 100 * (grossSellAmount - netSellAmount) / grossSellAmount;
+    console.log(msg.red);
+
+    return netSellAmount;
 }
 
 function printWorth() {
@@ -57,27 +98,26 @@ function sellAndRebalance(assetName) {
         totalWorth = getTotalWorth();
     
     console.log("--------------------------------".green);
-    console.log("before rebalancing: ".green, assetName.green);
+    console.log("before selling: ".green, assetName.green);
     printWorth();
     var totalSellWorth = currAssetWorth - asset.allocationPercentage * totalWorth;
     var assetSellQty = totalSellWorth / asset.currentPrice;
-    asset.currentQty -= assetSellQty;
-        
-    var tempBalance = (1 - taxRatio) * totalSellWorth;
+    var tempBalance = sellAssetUnits(asset, assetSellQty);
+    
     Object.keys(assets).forEach(function (otherAssetName) {
         if (otherAssetName != assetName) {
             var otherAsset = assets[otherAssetName];
-            var diffAmt = otherAsset.allocationPercentage * totalWorth - otherAsset.currentPrice * otherAsset.currentQty;
+            var diffAmt = otherAsset.allocationPercentage * totalWorth - otherAsset.currentPrice * getAssetQuantity(otherAsset);
             diffAmt = Math.min(diffAmt, tempBalance);
             if (diffAmt > 0) {
                 var diffQty = diffAmt / otherAsset.currentPrice;
                 tempBalance -= diffAmt;
-                otherAsset.currentQty += diffQty;
+                buyAssetUnits(otherAsset, diffQty);
             }
         }
     });
         
-    console.log("\nafter rebalancing: ".green, assetName.green);
+    console.log("\nafter selling: ".green, assetName.green);
     printWorth();
     console.log("--------------------------------\n".green);
 }
@@ -146,7 +186,8 @@ function loadCfg() {
             taxRatio = cfg.taxRatio;
             Object.keys(cfg.allocations).forEach(function(name) {
                 assets[name] = {};
-                assets[name].currentQty = 0;
+                assets[name].name = name;
+                assets[name].units = [];
                 assets[name].allocationPercentage = cfg.allocations[name];
             });
         });
